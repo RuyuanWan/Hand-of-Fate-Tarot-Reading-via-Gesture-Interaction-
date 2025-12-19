@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>3D 塔罗抽卡 - 78张高清维特版</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'PingFang SC', sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; }
+        .ui-panel {
+            position: absolute; padding: 20px; color: white;
+            background: rgba(0,0,0,0.8); border: 1px solid #ffd70055;
+            pointer-events: none; border-radius: 12px; backdrop-filter: blur(10px);
+        }
+        #info-panel { top: 20px; left: 20px; width: 320px; border-top: 4px solid #ffd700; }
+        #history-panel { bottom: 20px; left: 20px; width: 280px; max-height: 250px; overflow-y: auto; pointer-events: all; }
+        #control-panel { top: 20px; right: 20px; pointer-events: all; text-align: right; }
+        .btn { background: #ffd700; color: #000; border: none; padding: 10px 20px; cursor: pointer; border-radius: 6px; font-weight: bold; transition: 0.3s; }
+        .btn:hover { background: #fff; transform: scale(1.05); }
+        #debug-video { position: absolute; bottom: 20px; right: 20px; width: 160px; height: 120px; border: 2px solid #333; transform: scaleX(-1); border-radius: 8px; }
+        ul { list-style: none; padding: 0; margin: 0; }
+        li { padding: 6px 0; border-bottom: 1px solid #222; font-size: 13px; color: #ccc; }
+        b { color: #ffd700; }
+    </style>
+</head>
+<body>
+
+<div id="info-panel" class="ui-panel">
+    <h2 id="card-name" style="margin: 0 0 10px 0;">灵感洗牌中...</h2>
+    <div id="card-meaning">请展示手掌 (OPEN)</div>
+</div>
+
+<div id="history-panel" class="ui-panel">
+    <strong>历史记录</strong>
+    <ul id="history-list"></ul>
+</div>
+
+<div id="control-panel" class="ui-panel">
+    <div id="mode-text" style="margin-bottom:10px; font-size:14px; color: #ffd700;">正在加载全牌组...</div>
+    <button class="btn" onclick="toggleInputMode()">切换 鼠标/手势</button>
+</div>
+
+<video id="debug-video" autoplay playsinline></video>
+<div id="canvas-container"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script>
+/** ---------------- 78张完整编码链接 ---------------- **/
+const BASE = "https://upload.wikimedia.org/wikipedia/commons/";
+const TAROT_DECK = [
+    // 大阿尔卡纳 (Major Arcana)
+    { n: "0 - 愚者", u: "新的开始", r: "盲目冒险", src: BASE+"9/90/RWS_Tarot_00_Fool.jpg" },
+    { n: "I - 魔术师", u: "创造力、潜能", r: "沟通不畅", src: BASE+"d/de/RWS_Tarot_01_Magician.jpg" },
+    { n: "II - 女祭司", u: "直觉、智慧", r: "秘密暴露", src: BASE+"8/8d/RWS_Tarot_02_High_Priestess.jpg" },
+    { n: "III - 皇后", u: "丰饶、孕育", r: "自我否定", src: BASE+"a/af/RWS_Tarot_03_Empress.jpg" },
+    { n: "IV - 皇帝", u: "权威、结构", r: "固执僵化", src: BASE+"c/c3/RWS_Tarot_04_Emperor.jpg" },
+    { n: "V - 教皇", u: "传统、指导", r: "离经叛道", src: BASE+"8/8d/RWS_Tarot_05_Hierophant.jpg" },
+    { n: "VI - 恋人", u: "结合、契合", r: "选择失误", src: BASE+"d/db/RWS_Tarot_06_Lovers.jpg" },
+    { n: "VII - 战车", u: "意志、胜利", r: "方向迷失", src: BASE+"9/9b/RWS_Tarot_07_Chariot.jpg" },
+    { n: "VIII - 力量", u: "内在勇气", r: "滥用权力", src: BASE+"f/f5/RWS_Tarot_08_Strength.jpg" },
+    { n: "IX - 隐士", u: "孤独探索", r: "自我孤立", src: BASE+"4/4d/RWS_Tarot_09_Hermit.jpg" },
+    { n: "X - 命运之轮", u: "转折点、机遇", r: "坏运气", src: BASE+"3/3c/RWS_Tarot_10_Wheel_of_Fortune.jpg" },
+    { n: "XI - 正义", u: "因果、真相", r: "不公、偏见", src: BASE+"e/e0/RWS_Tarot_11_Justice.jpg" },
+    { n: "XII - 倒吊人", u: "牺牲、等待", r: "无谓挣扎", src: BASE+"2/2b/RWS_Tarot_12_Hanged_Man.jpg" },
+    { n: "XIII - 死神", u: "剧变、终结", r: "拒绝改变", src: BASE+"d/d7/RWS_Tarot_13_Death.jpg" },
+    { n: "XIV - 节制", u: "适度、融合", r: "极端失衡", src: BASE+"f/f8/RWS_Tarot_14_Temperance.jpg" },
+    { n: "XV - 恶魔", u: "执着、束缚", r: "脱离控制", src: BASE+"5/55/RWS_Tarot_15_Devil.jpg" },
+    { n: "XVI - 塔", u: "突变、震荡", r: "僵局不破", src: BASE+"5/53/RWS_Tarot_16_Tower.jpg" },
+    { n: "XVII - 星星", u: "希望、疗愈", r: "迷失方向", src: BASE+"d/db/RWS_Tarot_17_Star.jpg" },
+    { n: "XVIII - 月亮", u: "幻影、不安", r: "真相大白", src: BASE+"7/7f/RWS_Tarot_18_Moon.jpg" },
+    { n: "XIX - 太阳", u: "成功、喜悦", r: "暂时的挫折", src: BASE+"1/17/RWS_Tarot_19_Sun.jpg" },
+    { n: "XX - 审判", u: "重生、决定", r: "自我怀疑", src: BASE+"d/dd/RWS_Tarot_20_Judgement.jpg" },
+    { n: "XXI - 世界", u: "圆满完成", r: "功亏一篑", src: BASE+"f/ff/RWS_Tarot_21_World.jpg" },
+
+    // 权杖 (Wands)
+    { n: "权杖 Ace", u: "新计划", r: "难产", src: BASE+"1/11/Wands01.jpg" },
+    { n: "权杖 2", u: "决策", r: "犹豫不决", src: BASE+"0/0f/Wands02.jpg" },
+    { n: "权杖 3", u: "远见", r: "计划延误", src: BASE+"f/ff/Wands03.jpg" },
+    { n: "权杖 4", u: "庆祝", r: "内部矛盾", src: BASE+"a/a4/Wands04.jpg" },
+    { n: "权杖 5", u: "竞争", r: "纷争结束", src: BASE+"9/9d/Wands05.jpg" },
+    { n: "权杖 6", u: "胜利", r: "名存实亡", src: BASE+"3/3b/Wands06.jpg" },
+    { n: "权杖 7", u: "防卫", r: "不知所措", src: BASE+"e/e4/Wands07.jpg" },
+    { n: "权杖 8", u: "迅捷", r: "阻碍多变", src: BASE+"6/6b/Wands08.jpg" },
+    { n: "权杖 9", u: "防御、坚持", r: "筋疲力尽", src: BASE+"4/4d/Wands09.jpg" },
+    { n: "权杖 10", u: "重压", r: "释放负担", src: BASE+"0/0b/Wands10.jpg" },
+    { n: "权杖侍从", u: "热情讯息", r: "草率、流言", src: BASE+"6/6a/Wands11.jpg" },
+    { n: "权杖骑士", u: "冒险家", r: "鲁莽冲动", src: BASE+"1/16/Wands12.jpg" },
+    { n: "权杖女王", u: "自信魅力", r: "嫉妒控制", src: BASE+"0/0d/Wands13.jpg" },
+    { n: "权杖国王", u: "领袖气质", r: "独断专行", src: BASE+"c/ce/Wands14.jpg" },
+
+    // 圣杯 (Cups)
+    { n: "圣杯 Ace", u: "爱与满溢", r: "情感阻碍", src: BASE+"3/36/Cups01.jpg" },
+    { n: "圣杯 2", u: "和谐伙伴", r: "裂痕出现", src: BASE+"f/f8/Cups02.jpg" },
+    { n: "圣杯 3", u: "聚会喜悦", r: "过度放纵", src: BASE+"7/7a/Cups03.jpg" },
+    { n: "圣杯 4", u: "厌倦沉思", r: "察觉机会", src: BASE+"3/35/Cups04.jpg" },
+    { n: "圣杯 5", u: "悲伤失去", r: "走出阴影", src: BASE+"d/d7/Cups05.jpg" },
+    { n: "圣杯 6", u: "怀旧、纯真", r: "活在过去", src: BASE+"1/17/Cups06.jpg" },
+    { n: "圣杯 7", u: "幻象选择", r: "务实回归", src: BASE+"a/ae/Cups07.jpg" },
+    { n: "圣杯 8", u: "寻找真理", r: "徘徊原地", src: BASE+"6/60/Cups08.jpg" },
+    { n: "圣杯 9", u: "心满意足", r: "贪得无厌", src: BASE+"2/24/Cups09.jpg" },
+    { n: "圣杯 10", u: "家庭圆满", r: "关系不和", src: BASE+"5/59/Cups10.jpg" },
+    { n: "圣杯侍从", u: "感性新讯", r: "情绪化", src: BASE+"a/ad/Cups11.jpg" },
+    { n: "圣杯骑士", u: "浪漫主义", r: "不切实际", src: BASE+"f/fa/Cups12.jpg" },
+    { n: "圣杯女王", u: "慈悲洞察", r: "情绪操纵", src: BASE+"6/62/Cups13.jpg" },
+    { n: "圣杯国王", u: "情绪掌控", r: "冷漠疏离", src: BASE+"0/04/Cups14.jpg" },
+
+    // 宝剑 (Swords)
+    { n: "宝剑 Ace", u: "理智突破", r: "思维混乱", src: BASE+"1/1a/Swords01.jpg" },
+    { n: "宝剑 2", u: "僵局决策", r: "选择恐惧", src: BASE+"9/9e/Swords02.jpg" },
+    { n: "宝剑 3", u: "心碎痛苦", r: "疗愈起始", src: BASE+"0/02/Swords03.jpg" },
+    { n: "宝剑 4", u: "休养生息", r: "强制休息", src: BASE+"b/bf/Swords04.jpg" },
+    { n: "宝剑 5", u: "空虚胜利", r: "放下冲突", src: BASE+"2/23/Swords05.jpg" },
+    { n: "宝剑 6", u: "平稳度过", r: "重蹈覆辙", src: BASE+"2/29/Swords06.jpg" },
+    { n: "宝剑 7", u: "暗中行事", r: "被拆穿", src: BASE+"3/34/Swords07.jpg" },
+    { n: "宝剑 8", u: "自我设限", r: "摆脱束缚", src: BASE+"a/a7/Swords08.jpg" },
+    { n: "宝剑 9", u: "焦虑失眠", r: "正视恐惧", src: BASE+"2/2f/Swords09.jpg" },
+    { n: "宝剑 10", u: "彻底结束", r: "触底反弹", src: BASE+"d/d4/Swords10.jpg" },
+    { n: "宝剑侍从", u: "敏锐警觉", r: "妄议是非", src: BASE+"4/4b/Swords11.jpg" },
+    { n: "宝剑骑士", u: "急先锋", r: "横冲直撞", src: BASE+"b/b0/Swords12.jpg" },
+    { n: "宝剑女王", u: "冷静睿智", r: "刻薄冷酷", src: BASE+"d/d4/Swords13.jpg" },
+    { n: "宝剑国王", u: "逻辑专家", r: "滥用计谋", src: BASE+"3/33/Swords14.jpg" },
+
+    // 星币 (Pentacles)
+    { n: "星币 Ace", u: "物质基础", r: "财运不济", src: BASE+"f/fd/Pents01.jpg" },
+    { n: "星币 2", u: "平衡分配", r: "周转不灵", src: BASE+"9/9f/Pents02.jpg" },
+    { n: "星币 3", u: "团队合作", r: "敷衍了事", src: BASE+"4/42/Pents03.jpg" },
+    { n: "星币 4", u: "固守积蓄", r: "守财奴", src: BASE+"3/35/Pents04.jpg" },
+    { n: "星币 5", u: "贫困危机", r: "处境改善", src: BASE+"9/96/Pents05.jpg" },
+    { n: "星币 6", u: "施舍接受", r: "权力倾斜", src: BASE+"a/a6/Pents06.jpg" },
+    { n: "星币 7", u: "等待收获", r: "回报渺茫", src: BASE+"d/de/Pents07.jpg" },
+    { n: "星币 8", u: "专注磨练", r: "投机取巧", src: BASE+"e/ec/Pents08.jpg" },
+    { n: "星币 9", u: "独立优雅", r: "物质空虚", src: BASE+"f/f0/Pents09.jpg" },
+    { n: "星币 10", u: "家族基业", r: "财务纠纷", src: BASE+"4/42/Pents10.jpg" },
+    { n: "星币侍从", u: "务实开始", r: "短视浮躁", src: BASE+"e/ec/Pents11.jpg" },
+    { n: "星币骑士", u: "勤恳可靠", r: "停滞不前", src: BASE+"1/15/Pents12.jpg" },
+    { n: "星币女王", u: "稳健丰饶", r: "不切实际", src: BASE+"8/88/Pents13.jpg" },
+    { n: "星币国王", u: "财务成功", r: "腐败贪婪", src: BASE+"1/1c/Pents14.jpg" }
+];
+
+/** ---------------- 3D 初始化 ---------------- **/
+let scene, camera, renderer, raycaster, activeCard = null, particles = [];
+let isHandMode = true, pointer = new THREE.Vector2();
+const loader = new THREE.TextureLoader();
+loader.setCrossOrigin('anonymous');
+
+function init3D() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x020202);
+
+    camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 0, 8);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    const amLight = new THREE.AmbientLight(0xffffff, 2.5);
+    scene.add(amLight);
+
+    raycaster = new THREE.Raycaster();
+    window.addEventListener('resize', onWindowResize);
+
+    spawnCard();
+    animate();
+}
+
+/** ---------------- 卡牌生成 ---------------- **/
+function spawnCard() {
+    if (activeCard) scene.remove(activeCard);
+    
+    const cardInfo = TAROT_DECK[Math.floor(Math.random() * TAROT_DECK.length)];
+    const isReversed = Math.random() < 0.5;
+
+    const geometry = new THREE.BoxGeometry(3, 5, 0.1);
+    
+    // 加载正确的 Commons 链接
+    const faceTexture = loader.load(cardInfo.src);
+    faceTexture.encoding = THREE.sRGBEncoding;
+
+    const materials = [
+        new THREE.MeshStandardMaterial({ color: 0xeeeeee }), // 侧
+        new THREE.MeshStandardMaterial({ color: 0xeeeeee }),
+        new THREE.MeshStandardMaterial({ color: 0xeeeeee }),
+        new THREE.MeshStandardMaterial({ color: 0xeeeeee }),
+        new THREE.MeshStandardMaterial({ map: faceTexture, color: 0xffffff }), // 正面 (RWS)
+        new THREE.MeshStandardMaterial({ color: 0xffffff })  // 背面 (白色)
+    ];
+
+    const card = new THREE.Mesh(geometry, materials);
+    card.rotation.y = Math.PI; 
+    if (isReversed) card.rotation.z = Math.PI;
+
+    card.userData = { ...cardInfo, isReversed, state: 'idle' };
+    scene.add(card);
+    activeCard = card;
+}
+
+/** ---------------- 灰烬逻辑 ---------------- **/
+function createAshes(target) {
+    const count = 2500;
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    const vels = new Float32Array(count * 3);
+    const lives = new Float32Array(count);
+
+    const origin = target.position.clone();
+    for (let i = 0; i < count; i++) {
+        pos[i*3] = origin.x + (Math.random()-0.5)*3;
+        pos[i*3+1] = origin.y + (Math.random()-0.5)*5;
+        pos[i*3+2] = origin.z;
+        vels[i*3] = (Math.random()-0.5)*0.06;
+        vels[i*3+1] = Math.random()*0.12 + 0.04;
+        vels[i*3+2] = (Math.random()-0.5)*0.06;
+        lives[i] = 1.0;
+    }
+
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({ size: 0.05, color: 0xffcc33, transparent: true, blending: THREE.AdditiveBlending });
+    const points = new THREE.Points(geo, mat);
+    scene.add(points);
+    particles.push({ mesh: points, vels, lives });
+
+    // UI记录
+    const li = document.createElement('li');
+    li.innerHTML = `抽取到: <b>${target.userData.n}</b> (${target.userData.isReversed?'逆位':'正位'})`;
+    document.getElementById('history-list').prepend(li);
+
+    scene.remove(target);
+    activeCard = null;
+    setTimeout(spawnCard, 1500);
+}
+
+/** ---------------- 交互映射 ---------------- **/
+function updateInteraction(x, y, gesture) {
+    if (!activeCard) return;
+
+    raycaster.setFromCamera({x, y}, camera);
+    const hits = raycaster.intersectObject(activeCard);
+    const isHover = hits.length > 0;
+
+    // POINT
+    if (gesture === 'POINT' && isHover) {
+        activeCard.scale.set(1.05, 1.05, 1.05);
+    } else {
+        activeCard.scale.set(1, 1, 1);
+    }
+
+    // PINCH 抓取
+    if (gesture === 'PINCH' && isHover) {
+        activeCard.userData.state = 'grabbed';
+    }
+
+    if (activeCard.userData.state === 'grabbed') {
+        activeCard.position.lerp(new THREE.Vector3(x * 6, y * 4, 3), 0.15);
+        activeCard.rotation.y = THREE.MathUtils.lerp(activeCard.rotation.y, 0, 0.12); 
+        
+        const d = activeCard.userData;
+        document.getElementById('card-name').innerText = d.n + (d.isReversed ? " (逆位)" : " (正位)");
+        document.getElementById('card-meaning').innerHTML = d.isReversed ? d.r : d.u;
+
+        if (gesture === 'FIST') createAshes(activeCard);
+    } else {
+        if (gesture === 'OPEN') activeCard.userData.state = 'idle';
+        activeCard.position.y = Math.sin(Date.now() * 0.0025) * 0.5;
+        activeCard.rotation.y = THREE.MathUtils.lerp(activeCard.rotation.y, Math.PI, 0.06);
+    }
+}
+
+/** ---------------- MediaPipe ---------------- **/
+const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.75 });
+
+hands.onResults(results => {
+    if (results.multiHandLandmarks && results.multiHandLandmarks[0]) {
+        const lm = results.multiHandLandmarks[0];
+        const d_p = Math.hypot(lm[4].x-lm[8].x, lm[4].y-lm[8].y);
+        const fist = lm[8].y > lm[5].y && lm[12].y > lm[9].y && lm[20].y > lm[17].y;
+        const open = lm[8].y < lm[5].y && lm[20].y < lm[17].y;
+        const point = lm[8].y < lm[5].y && lm[12].y > lm[9].y;
+
+        let g = 'NONE';
+        if (fist) g = 'FIST';
+        else if (d_p < 0.06) g = 'PINCH';
+        else if (point) g = 'POINT';
+        else if (open) g = 'OPEN';
+
+        updateInteraction((0.5 - lm[9].x) * 2, (0.5 - lm[9].y) * 2, g);
+    }
+});
+
+function animate() {
+    requestAnimationFrame(animate);
+    particles.forEach((p, i) => {
+        const positions = p.mesh.geometry.attributes.position.array;
+        let alive = false;
+        for (let j = 0; j < p.lives.length; j++) {
+            if (p.lives[j] > 0) {
+                positions[j*3] += p.vels[j*3];
+                positions[j*3+1] += p.vels[j*3+1];
+                positions[j*3+2] += p.vels[j*3+2];
+                p.lives[j] -= 0.015;
+                alive = true;
+            }
+        }
+        p.mesh.geometry.attributes.position.needsUpdate = true;
+        p.mesh.material.opacity = p.lives[0];
+        if (!alive) { scene.remove(p.mesh); particles.splice(i, 1); }
+    });
+    renderer.render(scene, camera);
+}
+
+function toggleInputMode() {
+    isHandMode = !isHandMode;
+    document.getElementById('mode-text').innerText = isHandMode ? "模式: 手势识别" : "模式: 鼠标模式 (左击抓取/右击灰烬)";
+}
+
+window.addEventListener('mousemove', e => {
+    if(!isHandMode) {
+        pointer.set((e.clientX/window.innerWidth)*2-1, -(e.clientY/window.innerHeight)*2+1);
+        updateInteraction(pointer.x, pointer.y, 'POINT');
+    }
+});
+window.addEventListener('mousedown', e => {
+    if(!isHandMode) {
+        if(e.button === 0) updateInteraction(pointer.x, pointer.y, 'PINCH');
+        if(e.button === 2) updateInteraction(pointer.x, pointer.y, 'FIST');
+    }
+});
+
+function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+window.onload = () => {
+    init3D();
+    const vid = document.getElementById('debug-video');
+    const cam = new Camera(vid, {
+        onFrame: async () => { if(isHandMode) await hands.send({image: vid}); },
+        width: 640, height: 480
+    });
+    cam.start().then(()=>document.getElementById('mode-text').innerText="系统就绪").catch(()=>toggleInputMode());
+};
+window.oncontextmenu = e => e.preventDefault();
+</script>
+</body>
+</html>
